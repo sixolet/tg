@@ -1,7 +1,37 @@
 local mod = require 'core/mods'
-local matrix = require('matrix/lib/matrix')
 local nb = require('tg/lib/nb/lib/nb')
 local music = require('lib/musicutil')
+local hook = require 'core/hook'
+local tab = require 'tabutil'
+-- Begin post-init hack block
+if hook.script_post_init == nil and mod.hook.patched == nil then
+    mod.hook.patched = true
+    local old_register = mod.hook.register
+    local post_init_hooks = {}
+    mod.hook.register = function(h, name, f)
+        if h == "script_post_init" then
+            post_init_hooks[name] = f
+        else
+            old_register(h, name, f)
+        end
+    end
+    mod.hook.register('script_pre_init', '!replace init for fake post init', function()
+        local old_init = init
+        init = function()
+            old_init()
+            for i, k in ipairs(tab.sort(post_init_hooks)) do
+                local cb = post_init_hooks[k]
+                print('calling: ', k)
+                local ok, error = pcall(cb)
+                if not ok then
+                    print('hook: ' .. k .. ' failed, error: ' .. error)
+                end
+            end
+        end
+    end)
+end
+-- end post-init hack block
+
 
 local scale = music.generate_scale(12, "Major", 8)
 
@@ -49,28 +79,30 @@ end
 
 function pre_init()
     nb:init()
-    matrix:add_post_init_hook(function()
-        params:add_separator("tg")
-        params:add_number("tg_root", "root", 1, 12, 12, function(p)
-            return music.note_num_to_name(p:get())
-        end)
-        params:add_option("tg_scale", "scale", scale_names, 1)
-        params:set_action("tg_scale", function()
-            local s = scale_names[params:get("tg_scale")]
-            scale = music.generate_scale(params:get("tg_root"), s, 8)
-        end)
-        params:set_action("tg_root", function()
-            local s = scale_names[params:get("tg_scale")]
-            scale = music.generate_scale(params:get("tg_root"), s, 8)
-        end)
-        if matrix ~= nil then
-            matrix:defer_bang("tg_root")
-        end
-        for v = 1, 4 do
-            add_voice(v)
-        end
-        nb:add_player_params()
-    end)
 end
 
 mod.hook.register("script_pre_init", "tg pre init", pre_init)
+mod.hook.register("script_post_init", "tg post init", function()
+    params:add_separator("tg")
+    params:add_number("tg_root", "root", 1, 12, 12, function(p)
+        return music.note_num_to_name(p:get())
+    end)
+    params:add_option("tg_scale", "scale", scale_names, 1)
+    params:set_action("tg_scale", function()
+        local s = scale_names[params:get("tg_scale")]
+        scale = music.generate_scale(params:get("tg_root"), s, 8)
+    end)
+    params:set_action("tg_root", function()
+        local s = scale_names[params:get("tg_scale")]
+        scale = music.generate_scale(params:get("tg_root"), s, 8)
+    end)
+    local tg_root = params:lookup_param("tg_root")
+    clock.run(function()
+        clock.sleep(0)
+        tg_root:bang()
+    end)
+    for v = 1, 4 do
+        add_voice(v)
+    end
+    nb:add_player_params()
+end)
